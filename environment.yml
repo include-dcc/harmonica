@@ -1,0 +1,13 @@
+name: harmonica-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - pandas
+  - numpy
+  - tqdm
+  - pip:
+      - click
+      - openai
+      - oaklib
