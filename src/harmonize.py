@@ -16,19 +16,41 @@ __all__ = [
     "main",
 ]
 
+
+# Explicitly remove handlers that may have been added automatically
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 # Configure logger
-logger = logging.getLogger("harmonize")
+logger = logging.getLogger("harmonica")
 
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,
     format="%(asctime)s.%(msecs)03d [%(levelname)s] (%(module)s) (%(name)s): %(message)s",
     datefmt='%Y-%m-%d,%H:%M:%S',
     handlers=[
-        logging.FileHandler("error.log"),  # Log to a file named error.log
-        logging.StreamHandler()  # Also log to the console
+        logging.FileHandler("error.log"),
+        #logging.StreamHandler()
     ],
     force=True
 )
+
+# Silence root logger
+logging.getLogger().setLevel(logging.WARNING)
+
+# Silence oak logger
+logging.getLogger("sql_implementation").setLevel(logging.WARNING)
+
+
+# Silence SQLAlchemy and related sub-loggers
+for name in [
+    "sqlalchemy",
+    "sqlalchemy.engine",
+    "sqlalchemy.engine.Engine",
+    "sqlalchemy.pool"
+]:
+    logging.getLogger(name).setLevel(logging.WARNING)
+    logging.getLogger(name).propagate = False
 
 
 @click.group()
@@ -191,7 +213,7 @@ def search(oid: tuple, data_filename: str):
     all_final_results_dict = {}
 
     # Read in the data file
-    file_path = Path(f'data/input/TEST/{data_filename}')
+    file_path = Path(f'data/input/{data_filename}')
     xls = pd.ExcelFile(file_path)
     # TODO: parameterize Sheet name variable?
     data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
