@@ -30,7 +30,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d,%H:%M:%S',
     handlers=[
         logging.FileHandler("error.log"),
-        #logging.StreamHandler()
+        logging.StreamHandler()
     ],
     force=True
 )
@@ -192,6 +192,24 @@ def _clean_up_columns(df: pd.DataFrame, ontology_id: str) -> pd.DataFrame:
     return df
 
 
+def _check_ontology_versions(ontology_ids: tuple):
+    """
+    Check and print the cached ontology versions for each ID.
+    :param ontology_ids: Tuple of ontology IDs to check.
+    """
+    print("\nChecking local ontology versions...")
+    for oid in ontology_ids:
+        try:
+            adapter = get_adapter(f"sqlite:obo:{oid}")
+            for ont in adapter.ontologies():
+                meta = adapter.ontology_metadata_map(ont)
+                version = meta.get("owl:versionIRI", "Unknown")
+                print(f"  - {oid.upper()}: {version}")
+        except Exception as e:
+            print(f"  - {oid.upper()}: Error loading version ({e})")
+
+
+
 @main.command("search")
 @click.option('--oid', '-o', help='Ontology IDs separated by commas')
 @click.option('--data_filename', '-d')
@@ -237,7 +255,16 @@ def search(oid: tuple, data_filename: str):
             force_case_insensitive=True,
         )
 
+    # Check ontology versions 
+    _check_ontology_versions(oid)
 
+    # Ask user if they want to continue or update
+    response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
+    if response == 'n':
+        print("Exiting. Please clear ~/.data/oaklib or manually update the SQLite DBs.")
+        return
+
+    # Begin searching for ontology term matches
     for ontology_id in oid:
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
 

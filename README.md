@@ -2,14 +2,22 @@
 Harmonize data to ontology terms.
 
 ## Prerequisites
-_TODO_ Add a requirements.txt file to include which Python packages need to be installed.
+The prerequisites to run the script can either be installed using the `requirements.txt` file if using pyenv or `environment.yml` file if using conda.
+
+### Commands
+`pip install -r requirements.txt`
+ 
+ Or
+
+ `conda env create -f environment.yml`
+
 
 ## Usage
 ### Python
-python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "demo_data.xlsx"
+`python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "TEST/demo_data.xlsx"`
 
 ### Make
-make search oid="mondo,hp" data_filename="demo_data.xlsx"
+`make search oid="mondo,hp" data_filename="demo_data.xlsx"`
 
 _NOTE: Do not include any spaces when passing multiple ontology identifiers (oid)._
 
@@ -17,10 +25,12 @@ _NOTE: Do not include any spaces when passing multiple ontology identifiers (oid
 ## Ontology SQLite Database
 Using `get_adapter(f"sqlite:obo:{ontology_id}")` the ontology database is saved at `~/.data/oaklib/`.
 
-NOTE: This method downloads a version of an ontolgy from a AWS S3 bucket managed by BBOP. It seems only one version of an ontology is present in the S3 bucket and it is not known when this version is updated to the latest ontology version published.
+NOTE: This method downloads a version of an ontolgy from a AWS S3 bucket (https://s3.amazonaws.com/bbop-sqlite) managed by BBOP. It seems only one version of an ontology is present in the S3 bucket and it is not known when this version is updated to the latest ontology version published.
 
 TODO: Sort out how to download a new version of an ontology when an older version already exists in `~/.data/oaklib/`.
 Note: This can not be done automatically. See https://incatools.github.io/ontology-access-kit/faq/troubleshooting.html#my-cached-sqlite-ontology-is-out-of-date
+
+Update: See https://incatools.github.io/ontology-access-kit/cli.html#cache-control
 
 
 TODO: Include other methods to download ontology content and convert to a SQLite database using [semsql](https://github.com/INCATools/semantic-sql).
