@@ -11,6 +11,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+import os
+from pathlib import Path
 
 __all__ = [
     "main",
@@ -30,7 +32,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d,%H:%M:%S',
     handlers=[
         logging.FileHandler("error.log"),
-        #logging.StreamHandler()
+        logging.StreamHandler()
     ],
     force=True
 )
@@ -73,20 +75,44 @@ def main(verbose: int, quiet: bool):
         logger.setLevel(level=logging.ERROR)
 
 
-def fetch_ontology(ontology_id: str) -> SqlImplementation:
+def clear_cached_db(ontology_id: str):
+    """ Clear ontology database files. """
+    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
+    if cache_path.exists():
+        print(f"Removing cached DB: {cache_path}")
+        cache_path.unlink()
+    else:
+        print(f"No cached DB found for {ontology_id}")
+
+
+def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation:
     """
     Download ontology of interest and convert to SQLite database.
     :param ontology_id: The OBO identifier of the ontology.
+    :param refresh: Whether to force refresh the cached ontology.
     :returns adapter: The connector to the ontology database.
     """
-    logger.info('** Fetching ontology')
-    # TODO: Sort out how to download new ontology version if file already at ~/.data/oaklib
-    # This _CAN NOT_ be done automatically. See https://incatools.github.io/ontology-access-kit/faq/troubleshooting.html#my-cached-sqlite-ontology-is-out-of-date
+
+    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
+    
+    if refresh:
+        if cache_path.exists():
+            print(f"🔄 Refreshing cache by removing: {cache_path}")
+            cache_path.unlink()
+        else:
+            print(f"✅ No cached version found for {ontology_id}, will fetch fresh copy.")
+
+    # Load the adapter (this will download fresh if .db is missing)
     adapter = get_adapter(f"sqlite:obo:{ontology_id}")
     
-    for ont in adapter.ontologies():
-        ontology_metadata = adapter.ontology_metadata_map(ont)
-        logger.info(f"Ontology metadata: {ontology_metadata['id']}, {ontology_metadata['owl:versionIRI']}")
+    # Display ontology metadata
+    try:
+        for ont in adapter.ontologies():
+            metadata = adapter.ontology_metadata_map(ont)
+            version_iri = metadata.get("owl:versionIRI", "unknown")
+            print(f"📦 {ontology_id.upper()} version: {version_iri}")
+    except Exception as e:
+        print(f"⚠️ Could not fetch version metadata for {ontology_id}: {e}")
 
     return adapter
 
@@ -192,6 +218,24 @@ def _clean_up_columns(df: pd.DataFrame, ontology_id: str) -> pd.DataFrame:
     return df
 
 
+def _check_ontology_versions(ontology_ids: tuple):
+    """
+    Check and print the cached ontology versions for each ID.
+    :param ontology_ids: Tuple of ontology IDs to check.
+    """
+    print("\nChecking local ontology versions...")
+    for oid in ontology_ids:
+        try:
+            adapter = get_adapter(f"sqlite:obo:{oid}")
+            for ont in adapter.ontologies():
+                meta = adapter.ontology_metadata_map(ont)
+                version = meta.get("owl:versionIRI", "Unknown")
+                print(f"  - {oid.upper()}: {version}")
+        except Exception as e:
+            print(f"  - {oid.upper()}: Error loading version ({e})")
+
+
+
 @main.command("search")
 @click.option('--oid', '-o', help='Ontology IDs separated by commas')
 @click.option('--data_filename', '-d')
@@ -237,12 +281,26 @@ def search(oid: tuple, data_filename: str):
             force_case_insensitive=True,
         )
 
+    # Check ontology versions 
+    _check_ontology_versions(oid)
 
+    refresh_ontologies = False
+    response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
+    if response == 'n':
+        update_response = input("Would you like to download updated versions? [Y/n]: ").strip().lower()
+        if update_response != 'n':
+            refresh_ontologies = True
+        else:
+            print("Exiting.")
+            return
+
+
+    # Begin searching for ontology term matches
     for ontology_id in oid:
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
 
         # Get the ontology
-        adapter = fetch_ontology(ontology_id)
+        adapter = fetch_ontology(ontology_id, refresh=refresh_ontologies)
 
         # Search for matching ontology terms to LABEL
         exact_label_results_df = search_ontology(ontology_id, adapter, data_df, exact_label_search_config)

@@ -2,14 +2,22 @@
 Harmonize data to ontology terms.
 
 ## Prerequisites
-_TODO_ Add a requirements.txt file to include which Python packages need to be installed.
+The prerequisites to run the script can either be installed using the `requirements.txt` file if using pyenv or `environment.yml` file if using conda.
+
+### Commands
+`pip install -r requirements.txt`
+ 
+ Or
+
+ `conda env create -f environment.yml`
+
 
 ## Usage
 ### Python
-python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "demo_data.xlsx"
+`python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "TEST/demo_data.xlsx"`
 
 ### Make
-make search oid="mondo,hp" data_filename="demo_data.xlsx"
+`make search oid="mondo,hp" data_filename="demo_data.xlsx"`
 
 _NOTE: Do not include any spaces when passing multiple ontology identifiers (oid)._
 
@@ -17,10 +25,16 @@ _NOTE: Do not include any spaces when passing multiple ontology identifiers (oid
 ## Ontology SQLite Database
 Using `get_adapter(f"sqlite:obo:{ontology_id}")` the ontology database is saved at `~/.data/oaklib/`.
 
-NOTE: This method downloads a version of an ontolgy from a AWS S3 bucket managed by BBOP. It seems only one version of an ontology is present in the S3 bucket and it is not known when this version is updated to the latest ontology version published.
+NOTE: This method downloads a version of an ontolgy from an AWS S3 bucket (https://s3.amazonaws.com/bbop-sqlite) managed by the OAK developers (https://github.com/INCATools/ontology-access-kit). Only one version of an ontology is present in the S3 bucket.
 
-TODO: Sort out how to download a new version of an ontology when an older version already exists in `~/.data/oaklib/`.
-Note: This can not be done automatically. See https://incatools.github.io/ontology-access-kit/faq/troubleshooting.html#my-cached-sqlite-ontology-is-out-of-date
+Since OAK does not have a mechanism to automatically update the local cached ontology database (saved to `~/.data/oaklib/`), a custom method was added to harmonica. This gets the release date from the cached ontology database(s) and displays these to the user with a prompt asking whether to use these cached versions or download updated versions, where these updated versions are the latest version/content that is in the AWS S3 bucket. After downloading the latest content from the S3 bucket, the ontology release date is displayed again to the user and then the annotation process occurs.
+
+There is a cache control option for OAK, however this manages the default cache expiry lifetime of 7 days. This does not ensure that when the data annotation is run that it's using the latest ontology content available. As of this code update (31-Mar-2025), the `refresh` option is only available in the OAK commandline and not in the Python code.
+
+OAK references:
+- Cached ontology database is out of date - https://incatools.github.io/ontology-access-kit/faq/troubleshooting.html#my-cached-sqlite-ontology-is-out-of-date
+
+- Cache control - https://incatools.github.io/ontology-access-kit/cli.html#cache-control
 
 
 TODO: Include other methods to download ontology content and convert to a SQLite database using [semsql](https://github.com/INCATools/semantic-sql).
