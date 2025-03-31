@@ -83,7 +83,6 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
-        print('** Search Value: ', index, row)
         # TODO: Parameterize search column value
         for result in adapter.basic_search(row.iloc[2], config=config):
             exact_search_results.append([row["UUID"], result, adapter.label(result)])
@@ -192,7 +191,7 @@ def search(oid: tuple, data_filename: str):
     all_final_results_dict = {}
 
     # Read in the data file
-    file_path = Path(f'data/input/{data_filename}')
+    file_path = Path(f'data/input/TEST/{data_filename}')
     xls = pd.ExcelFile(file_path)
     # TODO: parameterize Sheet name variable?
     data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
