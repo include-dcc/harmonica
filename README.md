@@ -14,12 +14,10 @@ The prerequisites to run the script can either be installed using the `requireme
 
 ## Usage
 ### Python
-`python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "TEST/demo_data.xlsx"`
+`python src/harmonize.py -vv annotate --config config/config.yml --input_file data/input/TEST/demo_data.xlsx`
 
 ### Make
-`make search oid="mondo,hp" data_filename="demo_data.xlsx"`
-
-_NOTE: Do not include any spaces when passing multiple ontology identifiers (oid)._
+`make annotate input_file="data/input/TEST/demo_data.xlsx"`
 
 
 ## Ontology SQLite Database
@@ -39,6 +37,11 @@ OAK references:
 
 TODO: Include other methods to download ontology content and convert to a SQLite database using [semsql](https://github.com/INCATools/semantic-sql).
 
+
+## Configuration
+
+Copy the example config and customize it for your project:
+`cp config/config.example.yml config/config.yml`
 
 ## Data File
 Currently, the script assumes that the data file is an Excel file that has ~~one sheet~~ multiple sheets (TODO: paramterize Sheet name) and that the column with terms to search for matches to an ontology are in the first column.
