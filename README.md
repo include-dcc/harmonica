@@ -18,7 +18,8 @@ The prerequisites to run the script can either be installed using the `requireme
 python src/harmonize.py -vv annotate \
     --config config/config.yml \
     --input_file data/input/TEST/demo_data.xlsx \
-    --output_dir tmp/output/
+    --output_dir tmp/output/ \
+    --refresh
 ```
 
 ### Make
