@@ -1,4 +1,4 @@
-# Search ontology, run as: make search oid="mondo,hp" data_filename="test_data.xlsx"
-search:
-	@echo "** Search ontology: $(oid)"
-	python src/harmonize.py search --oid $(oid) --data_filename $(data_filename)
+# Annotate data file with ontology terms, run as: make annotate input_file="data/input/TEST/demo_data.xlsx"
+annotate:
+	@echo "** Annotate data file with ontology terms using config and input_file: $(input_file)"
+	python src/harmonize.py annotate --config config/config.yml --input_file $(input_file)
