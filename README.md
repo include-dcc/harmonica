@@ -53,6 +53,10 @@ TODO: Include other methods to download ontology content and convert to a SQLite
 Copy the example config and customize it for your project:
 `cp config/config.example.yml config/config.yml`
 
+## OpenAI API
+Create an OpenAI API Key [here](https://platform.openai.com/api-keys) and then add this your environment as: 
+`export OPENAI_API_KEY=your-key-here>`
+
 ## Data File
 Currently, the script assumes that the data file is an Excel file that has ~~one sheet~~ multiple sheets (TODO: paramterize Sheet name) and that the column with terms to search for matches to an ontology are in the first column.
 

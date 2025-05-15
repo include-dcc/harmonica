@@ -14,6 +14,15 @@ from tqdm import tqdm
 import sys
 import yaml
 from pathlib import Path
+import os
+import openai
+import json
+import re
+
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
+print('openai.api_key')
+
 
 __all__ = [
     "main",
@@ -210,6 +219,75 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     return search_results_df
 
 
+def llm_alt_names(filtered_df):
+    """ Ask LLM for alternative names for term. """
+    openai_suggestions = {}
+
+    for term in tqdm(filtered_df['source_column_value'].dropna().unique()):
+        suggestions = get_alternative_names(term)
+        openai_suggestions[term] = suggestions
+
+    print(openai_suggestions)
+
+
+def clean_json_response(content: str) -> str:
+    """
+    Clean common formatting issues in GPT output before JSON parsing.
+    """
+    # Replace smart quotes with standard quotes
+    content = content.replace("“", "\"").replace("”", "\"").replace("‘", "'").replace("’", "'")
+
+    # Strip any leading junk like ```json ... ```
+    content = re.sub(r"^```(json)?\s*", "", content.strip())
+    content = re.sub(r"\s*```$", "", content.strip())
+
+    return content
+
+
+def get_alternative_names(term: str) -> dict:
+    prompt = (
+        f"For the term '{term}', return a JSON object with three keys:\n"
+        "- 'input': the original term\n"
+        "- 'alt_names': a list of up to five alternative names\n"
+        "- 'source': the string 'openai'\n\n"
+        "Example format:\n"
+        "{\n"
+        '  "input": "hole in heart",\n'
+        '  "alt_names": [\n'
+        '    "atrial septal defect",\n'
+        '    "ventricular septal defect",\n'
+        '    "congenital heart defect",\n'
+        '    "septal defect",\n'
+        '    "cardiac shunt"\n'
+        "  ],\n"
+        '  "source": "openai"\n'
+        "}"
+    )
+
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=150,
+        )
+        content = response['choices'][0]['message']['content']
+        cleaned = clean_json_response(content)
+        result = json.loads(cleaned)
+        #alt_names = result["results"][0]["alt_names"]
+        #print(f"** ALT-NAMES: '{alt_names}' ")
+        return result
+    except json.JSONDecodeError:
+        print(f"Could not parse JSON: {content}")
+        return []
+    except Exception as e:
+        print(f"Error retrieving alt names for '{term}': {e}")
+        return []
+
+
+
+
 def generate_uuid() -> str:
     """Function to generate UUID"""
     return str(uuid.uuid4())
@@ -369,6 +447,21 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         overall_final_results_df = pd.merge(overall_exact_label_results_df, overall_exact_synonym_results_df, how='left', on='UUID')
         # Clean up dataframe to remove original search columns
         overall_final_results_df = _clean_up_columns(overall_final_results_df, ontology_id)
+
+
+
+        # Filter out rows that have results to prepare for LLM alternative names search
+        filtered_df = overall_exact_label_results_df[overall_exact_label_results_df[f'{ontology_prefix}_result_match_type'].isnull()]
+
+        # Loop over unmatched terms (assume one of your input columns is 'condition')
+        overall_llm_results_df = llm_alt_names(filtered_df)
+        # for term in tqdm(filtered_df['source_column_value'].dropna().unique()):
+        #     suggestions = get_alternative_names(term)
+        #     openai_suggestions[term] = suggestions
+
+
+
+
 
         # Save ontology search results to a dict
         all_final_results_dict[ontology_id] = overall_final_results_df
