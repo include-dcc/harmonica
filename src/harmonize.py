@@ -11,7 +11,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-import os
+import sys
+import yaml
 from pathlib import Path
 
 __all__ = [
@@ -115,6 +116,32 @@ def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation
         print(f"⚠️ Could not fetch version metadata for {ontology_id}: {e}")
 
     return adapter
+
+
+def load_config(config_path):
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        click.echo(f"Error reading config file: {e}", err=True)
+        sys.exit(1)
+
+    # Basic validation
+    required_keys = ["ontologies", "columns_to_annotate"]
+    for key in required_keys:
+        if key not in config:
+            click.echo(f"Missing required config key: {key}", err=True)
+            sys.exit(1)
+
+    if not isinstance(config["ontologies"], list) or not all(isinstance(o, str) for o in config["ontologies"]):
+        click.echo("Config error: 'ontologies' should be a list of strings", err=True)
+        sys.exit(1)
+
+    if not isinstance(config["columns_to_annotate"], list) or not all(isinstance(c, str) for c in config["columns_to_annotate"]):
+        click.echo("Config error: 'columns_to_annotate' should be a list of strings", err=True)
+        sys.exit(1)
+
+    return config
 
 
 def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -236,17 +263,32 @@ def _check_ontology_versions(ontology_ids: tuple):
 
 
 
-@main.command("search")
-@click.option('--oid', '-o', help='Ontology IDs separated by commas')
-@click.option('--data_filename', '-d')
-def search(oid: tuple, data_filename: str):
+@main.command("annotate")
+@click.option('--config', type=click.Path(exists=True), help='Path to YAML config file')
+@click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
+def annotate(config: str, input_file: str):
     """
-    Search an ontology for matches to terms in a data file.
-    :param ontology_id: The OBO identifier of the ontology.
+    Annotate a data file with ontology terms.
+    :param config: Path to the config file.
     :param data_filename: The name of the file with terms to search for ontology matches.
     """
-    oid = tuple(oid.split(',')) if oid else ()
+
+    config_data = load_config(config)
+
+    ontologies = config_data["ontologies"]
+    columns = config_data["columns_to_annotate"]
+
+    click.echo(f"Using ontologies: {ontologies}")
+    click.echo(f"Annotating columns: {columns}")
+
+
+
+    oid = tuple(o.lower() for o in config_data["ontologies"])
+ 
+
+   
     filename_prefix = '_'.join(oid)
+    
     output_data_directory = './data/output/'
 
     # Get the current formatted timestamp
@@ -257,7 +299,9 @@ def search(oid: tuple, data_filename: str):
     all_final_results_dict = {}
 
     # Read in the data file
-    file_path = Path(f'data/input/{data_filename}')
+    #file_path = Path(f'data/input/{data_filename}')
+    file_path = Path(input_file).resolve()
+
     xls = pd.ExcelFile(file_path)
     # TODO: parameterize Sheet name variable?
     data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
