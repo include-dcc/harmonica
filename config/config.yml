@@ -6,3 +6,5 @@ columns_to_annotate:
 #  - condition_source_text
    - source_column_value
 
+# Optional output directory
+output_dir: data/output/

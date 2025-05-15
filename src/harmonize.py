@@ -272,8 +272,9 @@ def _check_ontology_versions(ontology_ids: tuple):
 @main.command("annotate")
 @click.option('--config', type=click.Path(exists=True), help='Path to YAML config file')
 @click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
+@click.option('--output_dir', type=click.Path(), required=False, help='Optional override for output directory')
 @click.option('--refresh', is_flag=True, help='Force refresh of ontology cache')
-def annotate(config: str, input_file: str, refresh: bool):
+def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     """
     Annotate a data file with ontology terms.
     :param config: Path to the config file.
@@ -287,9 +288,17 @@ def annotate(config: str, input_file: str, refresh: bool):
 
     if not ontologies or not columns:
         raise click.ClickException("Config file must contain 'ontologies' and 'columns_to_annotate'.")
+    
+    # Determine output directory from CLI or config or fallback
+    output_dir = Path(output_dir or config_data.get("output_dir", "data/output/")).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
 
     click.echo(f"Using ontologies: {ontologies}")
     click.echo(f"Annotating columns: {columns}")
+    click.echo(f"Output directory: {output_dir}")
+    if refresh:
+        click.echo("Refresh mode enabled")
 
 
     oid = tuple(o.lower() for o in config_data["ontologies"])
@@ -298,7 +307,7 @@ def annotate(config: str, input_file: str, refresh: bool):
    
     filename_prefix = '_'.join(oid)
     
-    output_data_directory = './data/output/'
+    #output_data_directory = './data/output/'
 
     # Get the current formatted timestamp
     timestamp = datetime.now()
@@ -394,7 +403,9 @@ def annotate(config: str, input_file: str, refresh: bool):
 
 
     # Save combined results to file
-    combined_df.to_excel(f'{output_data_directory}{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx', index=False)
+    #combined_df.to_excel(f'{output_dir}{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx', index=False)
+    output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx"
+    combined_df.to_excel(output_path, index=False)
 
 
 if __name__ == "__main__":
