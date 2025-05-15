@@ -17,7 +17,9 @@ The prerequisites to run the script can either be installed using the `requireme
 `python src/harmonize.py -vv annotate --config config/config.yml --input_file data/input/TEST/demo_data.xlsx --refresh`
 
 ### Make
-`make annotate input_file="data/input/TEST/demo_data.xlsx"`
+`make annotate input_file=data/input/TEST/demo_data.xlsx refresh=true`
+
+NOTE: The flag `--refresh` will trigger methods to automatically update the OAK database ontology content. To run with the existing local OAK database content, remove either `--refresh` from your Python command or `refresh=true` from the `make` command.
 
 
 ## Ontology SQLite Database

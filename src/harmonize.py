@@ -292,11 +292,6 @@ def annotate(config: str, input_file: str, refresh: bool):
     click.echo(f"Annotating columns: {columns}")
 
 
-    # if refresh:
-    #     for prefix in ontologies:
-    #         clear_cached_db(prefix.lower())
-
-
     oid = tuple(o.lower() for o in config_data["ontologies"])
  
 
@@ -341,17 +336,6 @@ def annotate(config: str, input_file: str, refresh: bool):
 
     # Check ontology versions 
     _check_ontology_versions(oid)
-
-    # refresh_ontologies = False
-    # response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
-    # if response == 'n':
-    #     update_response = input("Would you like to download updated versions? [Y/n]: ").strip().lower()
-    #     if update_response != 'n':
-    #         refresh_ontologies = True
-    #     else:
-    #         print("Exiting.")
-    #         return
-
 
     # Begin searching for ontology term matches
     for ontology_id in oid:
