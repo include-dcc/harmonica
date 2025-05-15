@@ -1,8 +1,8 @@
 ontologies:
   - MONDO
-  - HPO
+  - HP
 
 columns_to_annotate:
-  - condition_source_text
-  - source_column_value
+#  - condition_source_text
+   - source_column_value
 

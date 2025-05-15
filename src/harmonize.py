@@ -77,13 +77,22 @@ def main(verbose: int, quiet: bool):
 
 
 def clear_cached_db(ontology_id: str):
-    """ Clear ontology database files. """
-    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
-    if cache_path.exists():
-        print(f"Removing cached DB: {cache_path}")
-        cache_path.unlink()
-    else:
-        print(f"No cached DB found for {ontology_id}")
+    """Clear ontology database files (.db and .db.gz) cached by OAK."""
+    base_path = Path.home() / ".data" / "oaklib"
+    db_files = [
+        base_path / f"{ontology_id}.db",
+        base_path / f"{ontology_id}.db.gz"
+    ]
+
+    for file in db_files:
+        print("DB refresh set to True.")
+        if file.exists():
+            print(f"Removing cached DB: {file}")
+            file.unlink()
+        else:
+            print(f"No cached DB found at: {file}")
+
+
 
 
 def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation:
@@ -94,28 +103,24 @@ def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation
     :returns adapter: The connector to the ontology database.
     """
 
-    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
-    
     if refresh:
-        if cache_path.exists():
-            print(f"🔄 Refreshing cache by removing: {cache_path}")
-            cache_path.unlink()
-        else:
-            print(f"✅ No cached version found for {ontology_id}, will fetch fresh copy.")
+        clear_cached_db(ontology_id)
 
-    # Load the adapter (this will download fresh if .db is missing)
+    # Download and cache the ontology if not already present
     adapter = get_adapter(f"sqlite:obo:{ontology_id}")
-    
+
     # Display ontology metadata
     try:
         for ont in adapter.ontologies():
             metadata = adapter.ontology_metadata_map(ont)
             version_iri = metadata.get("owl:versionIRI", "unknown")
-            print(f"📦 {ontology_id.upper()} version: {version_iri}")
+            print(f"{ontology_id.upper()} version: {version_iri}")
     except Exception as e:
-        print(f"⚠️ Could not fetch version metadata for {ontology_id}: {e}")
+        print(f"Could not fetch version metadata for {ontology_id}: {e}")
 
     return adapter
+
+
 
 
 def load_config(config_path):
@@ -158,6 +163,7 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
+        print("ROW: ", row)
         # TODO: Parameterize search column value
         for result in adapter.basic_search(row.iloc[2], config=config):
             exact_search_results.append([row["UUID"], result, adapter.label(result)])
@@ -266,7 +272,8 @@ def _check_ontology_versions(ontology_ids: tuple):
 @main.command("annotate")
 @click.option('--config', type=click.Path(exists=True), help='Path to YAML config file')
 @click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
-def annotate(config: str, input_file: str):
+@click.option('--refresh', is_flag=True, help='Force refresh of ontology cache')
+def annotate(config: str, input_file: str, refresh: bool):
     """
     Annotate a data file with ontology terms.
     :param config: Path to the config file.
@@ -278,9 +285,16 @@ def annotate(config: str, input_file: str):
     ontologies = config_data["ontologies"]
     columns = config_data["columns_to_annotate"]
 
+    if not ontologies or not columns:
+        raise click.ClickException("Config file must contain 'ontologies' and 'columns_to_annotate'.")
+
     click.echo(f"Using ontologies: {ontologies}")
     click.echo(f"Annotating columns: {columns}")
 
+
+    # if refresh:
+    #     for prefix in ontologies:
+    #         clear_cached_db(prefix.lower())
 
 
     oid = tuple(o.lower() for o in config_data["ontologies"])
@@ -328,15 +342,15 @@ def annotate(config: str, input_file: str):
     # Check ontology versions 
     _check_ontology_versions(oid)
 
-    refresh_ontologies = False
-    response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
-    if response == 'n':
-        update_response = input("Would you like to download updated versions? [Y/n]: ").strip().lower()
-        if update_response != 'n':
-            refresh_ontologies = True
-        else:
-            print("Exiting.")
-            return
+    # refresh_ontologies = False
+    # response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
+    # if response == 'n':
+    #     update_response = input("Would you like to download updated versions? [Y/n]: ").strip().lower()
+    #     if update_response != 'n':
+    #         refresh_ontologies = True
+    #     else:
+    #         print("Exiting.")
+    #         return
 
 
     # Begin searching for ontology term matches
@@ -344,7 +358,7 @@ def annotate(config: str, input_file: str):
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
 
         # Get the ontology
-        adapter = fetch_ontology(ontology_id, refresh=refresh_ontologies)
+        adapter = fetch_ontology(ontology_id, refresh=refresh)
 
         # Search for matching ontology terms to LABEL
         exact_label_results_df = search_ontology(ontology_id, adapter, data_df, exact_label_search_config)

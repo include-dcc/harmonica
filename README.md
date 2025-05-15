@@ -14,7 +14,7 @@ The prerequisites to run the script can either be installed using the `requireme
 
 ## Usage
 ### Python
-`python src/harmonize.py -vv annotate --config config/config.yml --input_file data/input/TEST/demo_data.xlsx`
+`python src/harmonize.py -vv annotate --config config/config.yml --input_file data/input/TEST/demo_data.xlsx --refresh`
 
 ### Make
 `make annotate input_file="data/input/TEST/demo_data.xlsx"`
