@@ -416,6 +416,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         label_hits_df = search_ontology(ontology_id, adapter, data_df, columns, label_config)
         label_hits_df["annotation_source"] = "oak"
         label_hits_df["annotation_method"] = "exact_label"
+        label_hits_df["ontology"] = ontology_id.lower()
 
         # Filter unmatched
         matched_uuids_label = set(label_hits_df["UUID"])
@@ -426,6 +427,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         synonym_hits_df = search_ontology(ontology_id, adapter, filtered_df, columns, synonym_config)
         synonym_hits_df["annotation_source"] = "oak"
         synonym_hits_df["annotation_method"] = "exact_synonym"
+        synonym_hits_df["ontology"] = ontology_id.lower()
 
         matched_uuids_syn = set(synonym_hits_df["UUID"])
         filtered_df = filtered_df[~filtered_df["UUID"].isin(matched_uuids_syn)]
@@ -452,6 +454,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
                     alt_match_df["annotation_source"] = "openai"
                     alt_match_df["annotation_method"] = "alt_term_name"
                     alt_match_df["original_term"] = term
+                    alt_match_df["ontology"] = ontology_id.lower()
                     openai_hits.append(alt_match_df)
                     found_match = True
                     break
@@ -463,7 +466,8 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
                     "annotation_source": "openai",
                     "annotation_method": "no_match",
                     "original_term": term,
-                    "alt_names": ', '.join(alt_response.get("alt_names", []))
+                    "alt_names": ', '.join(alt_response.get("alt_names", [])),
+                    "ontology": ontology_id.lower()
                 }]))
 
 
