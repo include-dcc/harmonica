@@ -425,7 +425,11 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         openai_hits = []
 
         for term in tqdm(filtered_df[columns[0]].dropna().unique()):
-            alt_response = get_alternative_names(term)
+            # Normalize the term
+            match = re.match(r"^(.*?)\s*\((\w{3,5})\)$", term.strip())
+            normalized_term = match.group(1).strip() if match else term.strip()
+
+            alt_response = get_alternative_names(normalized_term)
             if not alt_response:
                 continue
 
@@ -437,27 +441,39 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
             found_match = False
 
             for alt in alt_response.get("alt_names", []):
+                # First: exact label match
                 df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
-                alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
-                if not alt_match_df.empty:
-                    alt_match_df["annotation_source"] = "openai"
-                    alt_match_df["annotation_method"] = "alt_term_name"
-                    alt_match_df["original_term"] = term
-                    alt_match_df["ontology"] = ontology_id.lower()
-                    openai_hits.append(alt_match_df)
+                label_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
+                if not label_match_df.empty:
+                    label_match_df["annotation_source"] = "openai"
+                    label_match_df["annotation_method"] = "alt_term_label"
+                    label_match_df["original_term"] = normalized_term
+                    label_match_df["ontology"] = ontology_id.lower()
+                    openai_hits.append(label_match_df)
                     found_match = True
                     break
 
-            # If no match found for any alt name, still log the attempt
+                # Then: synonym match if label fails
+                synonym_match_df = search_ontology(ontology_id, adapter, df_search, columns, synonym_config)
+                if not synonym_match_df.empty:
+                    synonym_match_df["annotation_source"] = "openai"
+                    synonym_match_df["annotation_method"] = "alt_term_synonym"
+                    synonym_match_df["original_term"] = normalized_term
+                    synonym_match_df["ontology"] = ontology_id.lower()
+                    openai_hits.append(synonym_match_df)
+                    found_match = True
+                    break
+
             if not found_match:
                 openai_hits.append(pd.DataFrame([{
                     "UUID": uuid,
                     "annotation_source": "openai",
                     "annotation_method": "no_match",
-                    "original_term": term,
+                    "original_term": normalized_term,
                     "alt_names": ', '.join(alt_response.get("alt_names", [])),
                     "ontology": ontology_id.lower()
                 }]))
+
 
 
         openai_hits_df = pd.concat(openai_hits, ignore_index=True) if openai_hits else pd.DataFrame()
