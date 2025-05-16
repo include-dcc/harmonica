@@ -364,35 +364,24 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     output_dir = Path(output_dir or config_data.get("output_dir", "data/output/")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-
     click.echo(f"Using ontologies: {ontologies}")
     click.echo(f"Annotating columns: {columns}")
     click.echo(f"Output directory: {output_dir}")
     if refresh:
         click.echo("Refresh mode enabled")
 
-
     oid = tuple(o.lower() for o in config_data["ontologies"])
  
-
-   
     filename_prefix = '_'.join(oid)
-    
 
     # Get the current formatted timestamp
     timestamp = datetime.now()
     formatted_timestamp = timestamp.strftime("%Y%m%d-%H%M%S")
 
-
-    all_final_results_dict = {}
-
     # Read in the data file
-    #file_path = Path(f'data/input/{data_filename}')
     file_path = Path(input_file).resolve()
 
-    xls = pd.ExcelFile(file_path)
-    # TODO: parameterize Sheet name variable?
-    data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
+    data_df = pd.read_csv(file_path, sep='\t')
     logger.debug(data_df[columns])
     
     # Add a new column 'UUID' with unique identifier values
@@ -490,8 +479,8 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
 
     # === Save final output ===
     final_df = final_df.fillna("")
-    output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx"
-    final_df.to_excel(output_path, index=False)
+    output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.tsv"
+    final_df.to_csv(output_path, sep='\t', index=False)
     print(f"\nAnnotation results written to: {output_path}")
 
 

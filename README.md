@@ -17,13 +17,13 @@ The prerequisites to run the script can either be installed using the `requireme
 ```
 python src/harmonize.py -vv annotate \
     --config config/config.yml \
-    --input_file data/input/TEST/demo_data.xlsx \
+    --input_file data/input/TEST/conditions_simple.tsv \
     --output_dir tmp/output/ \
     --refresh
 ```
 
 ### Make
-`make annotate input_file=data/input/TEST/demo_data.xlsx output_dir=tmp/output refresh=true`
+`make annotate input_file=data/input/TEST/conditions_simple.tsv output_dir=tmp/output refresh=true`
 
 NOTES: 
 1. `--output_dir` is optional; it can be defined in the YAML config instead.
