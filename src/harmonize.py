@@ -93,7 +93,7 @@ def clear_cached_db(ontology_id: str):
     ]
 
     for file in db_files:
-        print("DB refresh set to True.")
+        logger.debug("DB refresh set to True.")
         if file.exists():
             logger.debug(f"Removing cached DB: {file}")
             file.unlink()
@@ -122,9 +122,9 @@ def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation
         for ont in adapter.ontologies():
             metadata = adapter.ontology_metadata_map(ont)
             version_iri = metadata.get("owl:versionIRI", "unknown")
-            print(f"{ontology_id.upper()} version: {version_iri}")
+            logger.debug(f"{ontology_id.upper()} version: {version_iri}")
     except Exception as e:
-        print(f"Could not fetch version metadata for {ontology_id}: {e}")
+        logger.debug(f"Could not fetch version metadata for {ontology_id}: {e}")
 
     return adapter
 
@@ -170,19 +170,16 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     column_to_use = columns[0]  # assuming just one for now
 
     # Create a tqdm instance to display search progress
-    progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
+    #progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
-        print(f"\n** COL: {row[column_to_use]}")
-        # TODO: Parameterize search column value
         for result in adapter.basic_search(row[column_to_use], config=config):
-        #for result in adapter.basic_search(row.iloc[2], config=config):
             exact_search_results.append([row["UUID"], result, adapter.label(result)])
             # Update the progress bar
-            progress_bar.update(1)
+            #progress_bar.update(1)
 
     # Close the progress bar
-    progress_bar.close()
+    #progress_bar.close()
 
     # Convert search results to dataframe
     results_df = pd.DataFrame(exact_search_results)
@@ -269,10 +266,10 @@ def get_alternative_names(term: str) -> dict:
         result = json.loads(cleaned)
         return result
     except json.JSONDecodeError:
-        print(f"Could not parse JSON: {content}")
+        logger.debug(f"Could not parse JSON: {content}")
         return []
     except Exception as e:
-        print(f"Error retrieving alt names for '{term}': {e}")
+        logger.debug(f"Error retrieving alt names for '{term}': {e}")
         return []
 
 
@@ -322,16 +319,16 @@ def _check_ontology_versions(ontology_ids: tuple):
     Check and print the cached ontology versions for each ID.
     :param ontology_ids: Tuple of ontology IDs to check.
     """
-    print("\nChecking local ontology versions...")
+    logger.debug("\nChecking local ontology versions...")
     for oid in ontology_ids:
         try:
             adapter = get_adapter(f"sqlite:obo:{oid}")
             for ont in adapter.ontologies():
                 meta = adapter.ontology_metadata_map(ont)
                 version = meta.get("owl:versionIRI", "Unknown")
-                print(f"  - {oid.upper()}: {version}")
+                logger.debug(f"  - {oid.upper()}: {version}")
         except Exception as e:
-            print(f"  - {oid.upper()}: Error loading version ({e})")
+            logger.debug(f"  - {oid.upper()}: Error loading version ({e})")
 
 
 
@@ -399,36 +396,22 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     logger.debug(data_df[columns])
     
     # Add a new column 'UUID' with unique identifier values
-    # TODO: Add the UUID column if it does not already exist
     data_df['UUID'] = data_df.apply(lambda row: generate_uuid(), axis=1)
     logger.debug(data_df.nunique())
     logger.info("Number of total rows in dataframe: %s", len(data_df))
-
-    # Exact LABEL Search configuration
-    exact_label_search_config = SearchConfiguration(
-            properties=[SearchProperty.LABEL],
-            force_case_insensitive=True,
-        )
-    
-    # Exact LABEL and SYNONYM Search configuration
-    exact_label_synonym_search_config = SearchConfiguration(
-            properties=[SearchProperty.ALIAS],
-            force_case_insensitive=True,
-        )
 
     # Check ontology versions 
     _check_ontology_versions(oid)
 
 
-
-    # ALL NEW
-    all_final_results = []  # To collect all annotation hits
+    # Collect all annotation results
+    all_final_results = []
 
     for ontology_id in oid:
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
         adapter = fetch_ontology(ontology_id, refresh=refresh)
 
-        # === Step 1: Exact LABEL match ===
+        # === Exact LABEL match ===
         label_config = SearchConfiguration(properties=[SearchProperty.LABEL], force_case_insensitive=True)
         label_hits_df = search_ontology(ontology_id, adapter, data_df, columns, label_config)
         label_hits_df["annotation_source"] = "oak"
@@ -438,7 +421,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         matched_uuids_label = set(label_hits_df["UUID"])
         filtered_df = data_df[~data_df["UUID"].isin(matched_uuids_label)]
 
-        # === Step 2: Synonym match ===
+        # === Synonym match ===
         synonym_config = SearchConfiguration(properties=[SearchProperty.ALIAS], force_case_insensitive=True)
         synonym_hits_df = search_ontology(ontology_id, adapter, filtered_df, columns, synonym_config)
         synonym_hits_df["annotation_source"] = "oak"
@@ -447,29 +430,8 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         matched_uuids_syn = set(synonym_hits_df["UUID"])
         filtered_df = filtered_df[~filtered_df["UUID"].isin(matched_uuids_syn)]
 
-        # === Step 3: OpenAI alt_names ===
+        # === OpenAI alternative names ===
         openai_hits = []
-        # for term in tqdm(filtered_df[columns[0]].dropna().unique()):
-        #     alt_response = get_alternative_names(term)
-        #     if not alt_response:
-        #         continue
-
-        #     uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
-        #     if uuid_series.empty:
-        #         continue
-        #     uuid = uuid_series.iloc[0]
-
-        #     for alt in alt_response.get("alt_names", []):
-        #         df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
-        #         alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
-        #         if not alt_match_df.empty:
-        #             alt_match_df["annotation_source"] = "openai"
-        #             alt_match_df["annotation_method"] = "alt_term_name"
-        #             alt_match_df["original_term"] = term
-        #             openai_hits.append(alt_match_df)
-        #             break
-
-
 
         for term in tqdm(filtered_df[columns[0]].dropna().unique()):
             alt_response = get_alternative_names(term)
@@ -511,7 +473,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
         results_df = pd.concat([label_hits_df, synonym_hits_df, openai_hits_df], ignore_index=True)
         all_final_results.append(results_df)
 
-    # === Combine all ontologies ===
+    # === Combine all results ===
     full_results = pd.concat(all_final_results, ignore_index=True)
 
     # === Merge with input metadata ===
@@ -526,7 +488,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     final_df = final_df.fillna("")
     output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx"
     final_df.to_excel(output_path, index=False)
-    print(f"\n✅ Annotation results written to: {output_path}")
+    print(f"\nAnnotation results written to: {output_path}")
 
 
 if __name__ == "__main__":
