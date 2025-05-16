@@ -449,6 +449,28 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
 
         # === Step 3: OpenAI alt_names ===
         openai_hits = []
+        # for term in tqdm(filtered_df[columns[0]].dropna().unique()):
+        #     alt_response = get_alternative_names(term)
+        #     if not alt_response:
+        #         continue
+
+        #     uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
+        #     if uuid_series.empty:
+        #         continue
+        #     uuid = uuid_series.iloc[0]
+
+        #     for alt in alt_response.get("alt_names", []):
+        #         df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
+        #         alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
+        #         if not alt_match_df.empty:
+        #             alt_match_df["annotation_source"] = "openai"
+        #             alt_match_df["annotation_method"] = "alt_term_name"
+        #             alt_match_df["original_term"] = term
+        #             openai_hits.append(alt_match_df)
+        #             break
+
+
+
         for term in tqdm(filtered_df[columns[0]].dropna().unique()):
             alt_response = get_alternative_names(term)
             if not alt_response:
@@ -459,6 +481,8 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
                 continue
             uuid = uuid_series.iloc[0]
 
+            found_match = False
+
             for alt in alt_response.get("alt_names", []):
                 df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
                 alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
@@ -467,7 +491,19 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
                     alt_match_df["annotation_method"] = "alt_term_name"
                     alt_match_df["original_term"] = term
                     openai_hits.append(alt_match_df)
+                    found_match = True
                     break
+
+            # If no match found for any alt name, still log the attempt
+            if not found_match:
+                openai_hits.append(pd.DataFrame([{
+                    "UUID": uuid,
+                    "annotation_source": "openai",
+                    "annotation_method": "no_match",
+                    "original_term": term,
+                    "alt_names": ', '.join(alt_response.get("alt_names", []))
+                }]))
+
 
         openai_hits_df = pd.concat(openai_hits, ignore_index=True) if openai_hits else pd.DataFrame()
 
