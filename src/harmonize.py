@@ -21,7 +21,6 @@ import re
 
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
-print('openai.api_key')
 
 
 __all__ = [
@@ -96,10 +95,10 @@ def clear_cached_db(ontology_id: str):
     for file in db_files:
         print("DB refresh set to True.")
         if file.exists():
-            print(f"Removing cached DB: {file}")
+            logger.debug(f"Removing cached DB: {file}")
             file.unlink()
         else:
-            print(f"No cached DB found at: {file}")
+            logger.debug(f"No cached DB found at: {file}")
 
 
 
@@ -158,7 +157,7 @@ def load_config(config_path):
     return config
 
 
-def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFrame, config: dict) -> pd.DataFrame:
+def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFrame, columns: list, config: dict) -> pd.DataFrame:
     """
     Search for exact matches to the ontology term label.
     :param adapter: The connector to the ontology database.
@@ -168,13 +167,16 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
     exact_search_results = []
 
+    column_to_use = columns[0]  # assuming just one for now
+
     # Create a tqdm instance to display search progress
     progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
-        print("ROW: ", row)
+        print(f"\n** COL: {row[column_to_use]}")
         # TODO: Parameterize search column value
-        for result in adapter.basic_search(row.iloc[2], config=config):
+        for result in adapter.basic_search(row[column_to_use], config=config):
+        #for result in adapter.basic_search(row.iloc[2], config=config):
             exact_search_results.append([row["UUID"], result, adapter.label(result)])
             # Update the progress bar
             progress_bar.update(1)
@@ -218,16 +220,6 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
 
     return search_results_df
 
-
-def llm_alt_names(filtered_df):
-    """ Ask LLM for alternative names for term. """
-    openai_suggestions = {}
-
-    for term in tqdm(filtered_df['source_column_value'].dropna().unique()):
-        suggestions = get_alternative_names(term)
-        openai_suggestions[term] = suggestions
-
-    print(openai_suggestions)
 
 
 def clean_json_response(content: str) -> str:
@@ -275,8 +267,6 @@ def get_alternative_names(term: str) -> dict:
         content = response['choices'][0]['message']['content']
         cleaned = clean_json_response(content)
         result = json.loads(cleaned)
-        #alt_names = result["results"][0]["alt_names"]
-        #print(f"** ALT-NAMES: '{alt_names}' ")
         return result
     except json.JSONDecodeError:
         print(f"Could not parse JSON: {content}")
@@ -284,8 +274,6 @@ def get_alternative_names(term: str) -> dict:
     except Exception as e:
         print(f"Error retrieving alt names for '{term}': {e}")
         return []
-
-
 
 
 def generate_uuid() -> str:
@@ -347,6 +335,14 @@ def _check_ontology_versions(ontology_ids: tuple):
 
 
 
+def custom_join(series):
+    non_empty = series.dropna().astype(str).str.strip()
+    non_empty = [v for v in non_empty if v]
+    unique_vals = list(dict.fromkeys(non_empty))
+    return ', '.join(unique_vals) if unique_vals else ''
+
+
+
 @main.command("annotate")
 @click.option('--config', type=click.Path(exists=True), help='Path to YAML config file')
 @click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
@@ -385,7 +381,6 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
    
     filename_prefix = '_'.join(oid)
     
-    #output_data_directory = './data/output/'
 
     # Get the current formatted timestamp
     timestamp = datetime.now()
@@ -401,7 +396,7 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     xls = pd.ExcelFile(file_path)
     # TODO: parameterize Sheet name variable?
     data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
-    logger.debug(data_df.head())
+    logger.debug(data_df[columns])
     
     # Add a new column 'UUID' with unique identifier values
     # TODO: Add the UUID column if it does not already exist
@@ -424,81 +419,78 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
     # Check ontology versions 
     _check_ontology_versions(oid)
 
-    # Begin searching for ontology term matches
+
+
+    # ALL NEW
+    all_final_results = []  # To collect all annotation hits
+
     for ontology_id in oid:
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
-
-        # Get the ontology
         adapter = fetch_ontology(ontology_id, refresh=refresh)
 
-        # Search for matching ontology terms to LABEL
-        exact_label_results_df = search_ontology(ontology_id, adapter, data_df, exact_label_search_config)
-        # Join exact_label_results_df back to original input data
-        overall_exact_label_results_df = pd.merge(data_df, exact_label_results_df, how='left', on='UUID')
-        # Clean up dataframe to remove original search columns
-        overall_exact_label_results_df = _clean_up_columns(overall_exact_label_results_df, ontology_id)
+        # === Step 1: Exact LABEL match ===
+        label_config = SearchConfiguration(properties=[SearchProperty.LABEL], force_case_insensitive=True)
+        label_hits_df = search_ontology(ontology_id, adapter, data_df, columns, label_config)
+        label_hits_df["annotation_source"] = "oak"
+        label_hits_df["annotation_method"] = "exact_label"
 
-        # Filter out rows that have results to prepare for synonym search
-        filtered_df = overall_exact_label_results_df[overall_exact_label_results_df[f'{ontology_prefix}_result_match_type'].isnull()]
+        # Filter unmatched
+        matched_uuids_label = set(label_hits_df["UUID"])
+        filtered_df = data_df[~data_df["UUID"].isin(matched_uuids_label)]
 
-        # Search for matching terms to SYNONYM
-        overall_exact_synonym_results_df = search_ontology(ontology_id, adapter, filtered_df, exact_label_synonym_search_config)
-        # Join overall_exact_synonym_results_df back to overall_results_df
-        overall_final_results_df = pd.merge(overall_exact_label_results_df, overall_exact_synonym_results_df, how='left', on='UUID')
-        # Clean up dataframe to remove original search columns
-        overall_final_results_df = _clean_up_columns(overall_final_results_df, ontology_id)
+        # === Step 2: Synonym match ===
+        synonym_config = SearchConfiguration(properties=[SearchProperty.ALIAS], force_case_insensitive=True)
+        synonym_hits_df = search_ontology(ontology_id, adapter, filtered_df, columns, synonym_config)
+        synonym_hits_df["annotation_source"] = "oak"
+        synonym_hits_df["annotation_method"] = "exact_synonym"
 
+        matched_uuids_syn = set(synonym_hits_df["UUID"])
+        filtered_df = filtered_df[~filtered_df["UUID"].isin(matched_uuids_syn)]
 
+        # === Step 3: OpenAI alt_names ===
+        openai_hits = []
+        for term in tqdm(filtered_df["source_column_value"].dropna().unique()):
+            alt_response = get_alternative_names(term)
+            if not alt_response:
+                continue
 
-        # Filter out rows that have results to prepare for LLM alternative names search
-        filtered_df = overall_exact_label_results_df[overall_exact_label_results_df[f'{ontology_prefix}_result_match_type'].isnull()]
+            uuid_series = filtered_df[filtered_df["source_column_value"] == term]["UUID"]
+            if uuid_series.empty:
+                continue
+            uuid = uuid_series.iloc[0]
 
-        # Loop over unmatched terms (assume one of your input columns is 'condition')
-        overall_llm_results_df = llm_alt_names(filtered_df)
-        # for term in tqdm(filtered_df['source_column_value'].dropna().unique()):
-        #     suggestions = get_alternative_names(term)
-        #     openai_suggestions[term] = suggestions
+            for alt in alt_response.get("alt_names", []):
+                df_search = pd.DataFrame({"UUID": [uuid], "source_column_value": [alt]})
+                alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
+                if not alt_match_df.empty:
+                    alt_match_df["annotation_source"] = "openai"
+                    alt_match_df["annotation_method"] = "alt_term_name"
+                    alt_match_df["original_term"] = term
+                    openai_hits.append(alt_match_df)
+                    break
 
+        openai_hits_df = pd.concat(openai_hits, ignore_index=True) if openai_hits else pd.DataFrame()
 
+        # Combine results from all strategies for this ontology
+        results_df = pd.concat([label_hits_df, synonym_hits_df, openai_hits_df], ignore_index=True)
+        all_final_results.append(results_df)
 
+    # === Combine all ontologies ===
+    full_results = pd.concat(all_final_results, ignore_index=True)
 
+    # === Merge with input metadata ===
+    data_df["UUID"] = data_df["UUID"].astype(str).str.strip()
+    full_results["UUID"] = full_results["UUID"].astype(str).str.strip()
+    final_df = pd.merge(data_df, full_results, on="UUID", how="left")
 
-        # Save ontology search results to a dict
-        all_final_results_dict[ontology_id] = overall_final_results_df
+    # Drop duplicated or unnecessary columns
+    final_df.drop(columns=["source_column_value_y", "original_term"], inplace=True, errors="ignore")
 
-
-
-    # Finally, combine all results and save to file!
-    # Concatenate all DataFrames into a single DataFrame
-    result_df = pd.concat(all_final_results_dict.values(), ignore_index=True)
-
-    # Replace NaN values with empty string
-    df_cleaned = result_df.fillna('')
-
-    # Define a custom aggregation function to join non-empty values
-    def custom_join(series):
-        non_empty_values = [value for value in series if value != '']
-        return ', '.join(non_empty_values)
-    
-
-    # Add columns dynamically to the "agg" function _if_ they exist within the dataframe
-    columns_to_groupby = ['UUID', 'study', 'source_column', 'source_column_value', 'conditionMeasureSourceText']
-    columns_to_agg = [col for col in df_cleaned.columns if col in [
-        'hpoLabel', 'hpoCode', 'hpo_result_match_type',
-        'mondoLabel', 'mondoCode', 'mondo_result_match_type', 
-        'maxoLabel', 'maxoCode', 'maxo_result_match_type',
-        'otherLabel', 'otherCode', 'Trish Notes']
-    ]
-
-    # Perform the groupby and aggregation
-    agg_dict = {col: custom_join for col in columns_to_agg}
-    combined_df = df_cleaned.groupby(columns_to_groupby).agg(agg_dict).reset_index()
-
-
-    # Save combined results to file
-    #combined_df.to_excel(f'{output_dir}{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx', index=False)
+    # === Save final output ===
+    final_df = final_df.fillna("")
     output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx"
-    combined_df.to_excel(output_path, index=False)
+    final_df.to_excel(output_path, index=False)
+    print(f"\n✅ Annotation results written to: {output_path}")
 
 
 if __name__ == "__main__":
