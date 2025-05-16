@@ -345,7 +345,8 @@ def custom_join(series):
 @click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
 @click.option('--output_dir', type=click.Path(), required=False, help='Optional override for output directory')
 @click.option('--refresh', is_flag=True, help='Force refresh of ontology cache')
-def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
+@click.option('--no_openai', is_flag=True, help='Disable OpenAI-based fallback searches')
+def annotate(config: str, input_file: str, output_dir: str, refresh: bool, no_openai: bool):
     """
     Annotate a data file with ontology terms.
     :param config: Path to the config file.
@@ -423,64 +424,71 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
 
         # === OpenAI alternative names ===
         openai_hits = []
+        if not no_openai:
+            for term in tqdm(filtered_df[columns[0]].dropna().unique()):
+                # Normalize the term
+                match = re.match(r"^(.*?)\s*\((\w{3,5})\)$", term.strip())
+                normalized_term = match.group(1).strip() if match else term.strip()
 
-        for term in tqdm(filtered_df[columns[0]].dropna().unique()):
-            # Normalize the term
-            match = re.match(r"^(.*?)\s*\((\w{3,5})\)$", term.strip())
-            normalized_term = match.group(1).strip() if match else term.strip()
+                alt_response = get_alternative_names(normalized_term)
+                if not alt_response:
+                    continue
 
-            alt_response = get_alternative_names(normalized_term)
-            if not alt_response:
-                continue
+                uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
+                if uuid_series.empty:
+                    continue
+                uuid = uuid_series.iloc[0]
 
-            uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
-            if uuid_series.empty:
-                continue
-            uuid = uuid_series.iloc[0]
+                found_match = False
 
-            found_match = False
+                for alt in alt_response.get("alt_names", []):
+                    # First: exact label match
+                    df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
+                    label_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
+                    if not label_match_df.empty:
+                        label_match_df["annotation_source"] = "openai"
+                        label_match_df["annotation_method"] = "alt_term_label"
+                        label_match_df["original_term"] = normalized_term
+                        label_match_df["ontology"] = ontology_id.lower()
+                        openai_hits.append(label_match_df)
+                        found_match = True
+                        break
 
-            for alt in alt_response.get("alt_names", []):
-                # First: exact label match
-                df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
-                label_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
-                if not label_match_df.empty:
-                    label_match_df["annotation_source"] = "openai"
-                    label_match_df["annotation_method"] = "alt_term_label"
-                    label_match_df["original_term"] = normalized_term
-                    label_match_df["ontology"] = ontology_id.lower()
-                    openai_hits.append(label_match_df)
-                    found_match = True
-                    break
+                    # Then: synonym match if label fails
+                    synonym_match_df = search_ontology(ontology_id, adapter, df_search, columns, synonym_config)
+                    if not synonym_match_df.empty:
+                        synonym_match_df["annotation_source"] = "openai"
+                        synonym_match_df["annotation_method"] = "alt_term_synonym"
+                        synonym_match_df["original_term"] = normalized_term
+                        synonym_match_df["ontology"] = ontology_id.lower()
+                        openai_hits.append(synonym_match_df)
+                        found_match = True
+                        break
 
-                # Then: synonym match if label fails
-                synonym_match_df = search_ontology(ontology_id, adapter, df_search, columns, synonym_config)
-                if not synonym_match_df.empty:
-                    synonym_match_df["annotation_source"] = "openai"
-                    synonym_match_df["annotation_method"] = "alt_term_synonym"
-                    synonym_match_df["original_term"] = normalized_term
-                    synonym_match_df["ontology"] = ontology_id.lower()
-                    openai_hits.append(synonym_match_df)
-                    found_match = True
-                    break
-
-            if not found_match:
-                openai_hits.append(pd.DataFrame([{
-                    "UUID": uuid,
-                    "annotation_source": "openai",
-                    "annotation_method": "no_match",
-                    "original_term": normalized_term,
-                    "alt_names": ', '.join(alt_response.get("alt_names", [])),
-                    "ontology": ontology_id.lower()
-                }]))
-
+                if not found_match:
+                    openai_hits.append(pd.DataFrame([{
+                        "UUID": uuid,
+                        "annotation_source": "openai",
+                        "annotation_method": "no_match",
+                        "original_term": normalized_term,
+                        "alt_names": ', '.join(alt_response.get("alt_names", [])),
+                        "ontology": ontology_id.lower()
+                    }]))
 
 
         openai_hits_df = pd.concat(openai_hits, ignore_index=True) if openai_hits else pd.DataFrame()
+        results_sources = [label_hits_df, synonym_hits_df]
+        if not openai_hits_df.empty:
+            results_sources.append(openai_hits_df)
 
-        # Combine results from all strategies for this ontology
-        results_df = pd.concat([label_hits_df, synonym_hits_df, openai_hits_df], ignore_index=True)
-        all_final_results.append(results_df)
+        results_df = pd.concat(results_sources, ignore_index=True)
+        if not results_df.empty:
+            all_final_results.append(results_df)
+
+    # === Exit if no results  ===
+    if not all_final_results:
+        logger.warning("No annotation results found for any ontology.")
+        return
 
     # === Combine all results ===
     full_results = pd.concat(all_final_results, ignore_index=True)
