@@ -449,18 +449,18 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool):
 
         # === Step 3: OpenAI alt_names ===
         openai_hits = []
-        for term in tqdm(filtered_df["source_column_value"].dropna().unique()):
+        for term in tqdm(filtered_df[columns[0]].dropna().unique()):
             alt_response = get_alternative_names(term)
             if not alt_response:
                 continue
 
-            uuid_series = filtered_df[filtered_df["source_column_value"] == term]["UUID"]
+            uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
             if uuid_series.empty:
                 continue
             uuid = uuid_series.iloc[0]
 
             for alt in alt_response.get("alt_names", []):
-                df_search = pd.DataFrame({"UUID": [uuid], "source_column_value": [alt]})
+                df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
                 alt_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
                 if not alt_match_df.empty:
                     alt_match_df["annotation_source"] = "openai"
