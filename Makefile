@@ -6,5 +6,6 @@ annotate:
 		--input_file $(input_file)"; \
 	if [ -n "$(output_dir)" ]; then cmd="$$cmd --output_dir $(output_dir)"; fi; \
 	if [ -n "$(refresh)" ]; then cmd="$$cmd --refresh"; fi; \
+	if [ -n "$(use_openai)" ]; then cmd="$$cmd --use_openai"; fi; \
 	echo $$cmd; \
 	eval $$cmd

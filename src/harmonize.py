@@ -173,10 +173,12 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     #progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
-        for result in adapter.basic_search(row[column_to_use], config=config):
-            exact_search_results.append([row["UUID"], result, adapter.label(result)])
-            # Update the progress bar
-            #progress_bar.update(1)
+        if pd.notna(row[column_to_use]):
+            print(f'Search using {row[column_to_use]}')
+            for result in adapter.basic_search(row[column_to_use], config=config):
+                exact_search_results.append([row["UUID"], result, adapter.label(result)])
+                # Update the progress bar
+                #progress_bar.update(1)
 
     # Close the progress bar
     #progress_bar.close()
@@ -265,9 +267,17 @@ def get_alternative_names(term: str) -> dict:
         cleaned = clean_json_response(content)
         result = json.loads(cleaned)
         return result
-    except json.JSONDecodeError:
-        logger.debug(f"Could not parse JSON: {content}")
+    except json.JSONDecodeError as e:
+        logger.debug(f"Could not parse JSON from content: {repr(content)} - JSONDecodeError: {e}")
         return []
+    except openai.error.OpenAIError as oe:
+        logger.debug(f"OpenAI API error for '{term}': {oe}")
+        return []
+    except openai.error.InvalidRequestError as e:
+        if "quota" in str(e).lower():
+            logger.error("Quota exceeded — check billing and usage.")
+        else:
+            logger.error(f"OpenAI API request error: {e}")
     except Exception as e:
         logger.debug(f"Error retrieving alt names for '{term}': {e}")
         return []
@@ -345,8 +355,8 @@ def custom_join(series):
 @click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
 @click.option('--output_dir', type=click.Path(), required=False, help='Optional override for output directory')
 @click.option('--refresh', is_flag=True, help='Force refresh of ontology cache')
-@click.option('--no_openai', is_flag=True, help='Disable OpenAI-based fallback searches')
-def annotate(config: str, input_file: str, output_dir: str, refresh: bool, no_openai: bool):
+@click.option('--use_openai', is_flag=True, default=False, help='Use OpenAI-based fallback searches')
+def annotate(config: str, input_file: str, output_dir: str, refresh: bool, use_openai: bool):
     """
     Annotate a data file with ontology terms.
     :param config: Path to the config file.
@@ -424,7 +434,8 @@ def annotate(config: str, input_file: str, output_dir: str, refresh: bool, no_op
 
         # === OpenAI alternative names ===
         openai_hits = []
-        if not no_openai:
+        if use_openai:
+            print('Searching OpenAI now....')
             for term in tqdm(filtered_df[columns[0]].dropna().unique()):
                 # Normalize the term
                 match = re.match(r"^(.*?)\s*\((\w{3,5})\)$", term.strip())

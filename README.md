@@ -20,15 +20,16 @@ python src/harmonize.py -vv annotate \
     --input_file data/input/TEST/conditions_simple.tsv \
     --output_dir tmp/output/ \
     --refresh
+    --use_openai=false
 ```
 
 ### Make
-`make annotate input_file=data/input/TEST/conditions_simple.tsv output_dir=tmp/output refresh=true`
+`make annotate input_file=data/input/TEST/conditions_simple.tsv output_dir=tmp/output refresh=true use_openai=false`
 
 NOTES: 
 1. `--output_dir` is optional; it can be defined in the YAML config instead.
 1. `--refresh` flag to update the cached OAK ontology database. To rely on the existing local copy, leave out `--refresh` or `refresh=true`.
-
+1. `--use_openai` flag to skip LLM-based annotation, if true search with LLM approaches are used. The default is false. 
 
 ## Ontology SQLite Database
 Using `get_adapter(f"sqlite:obo:{ontology_id}")` the ontology database is saved at `~/.data/oaklib/`.
