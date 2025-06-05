@@ -174,7 +174,6 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
 
     for index, row in df.iterrows():
         if pd.notna(row[column_to_use]):
-            print(f'Search using {row[column_to_use]}')
             for result in adapter.basic_search(row[column_to_use], config=config):
                 exact_search_results.append([row["UUID"], result, adapter.label(result)])
                 # Update the progress bar
