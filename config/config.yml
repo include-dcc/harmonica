@@ -1,0 +1,10 @@
+ontologies:
+  - MONDO
+  - HP
+  - MAXO
+
+columns_to_annotate:
+  - condition_source_text
+
+# Optional output directory
+output_dir: data/output/

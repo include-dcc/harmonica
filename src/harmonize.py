@@ -11,8 +11,17 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-import os
+import sys
+import yaml
 from pathlib import Path
+import os
+import openai
+import json
+import re
+
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 
 __all__ = [
     "main",
@@ -76,13 +85,22 @@ def main(verbose: int, quiet: bool):
 
 
 def clear_cached_db(ontology_id: str):
-    """ Clear ontology database files. """
-    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
-    if cache_path.exists():
-        print(f"Removing cached DB: {cache_path}")
-        cache_path.unlink()
-    else:
-        print(f"No cached DB found for {ontology_id}")
+    """Clear ontology database files (.db and .db.gz) cached by OAK."""
+    base_path = Path.home() / ".data" / "oaklib"
+    db_files = [
+        base_path / f"{ontology_id}.db",
+        base_path / f"{ontology_id}.db.gz"
+    ]
+
+    for file in db_files:
+        logger.debug("DB refresh set to True.")
+        if file.exists():
+            logger.debug(f"Removing cached DB: {file}")
+            file.unlink()
+        else:
+            logger.debug(f"No cached DB found at: {file}")
+
+
 
 
 def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation:
@@ -93,31 +111,53 @@ def fetch_ontology(ontology_id: str, refresh: bool = False) -> SqlImplementation
     :returns adapter: The connector to the ontology database.
     """
 
-    cache_path = Path.home() / ".data" / "oaklib" / f"{ontology_id}.db"
-    
     if refresh:
-        if cache_path.exists():
-            print(f"🔄 Refreshing cache by removing: {cache_path}")
-            cache_path.unlink()
-        else:
-            print(f"✅ No cached version found for {ontology_id}, will fetch fresh copy.")
+        clear_cached_db(ontology_id)
 
-    # Load the adapter (this will download fresh if .db is missing)
+    # Download and cache the ontology if not already present
     adapter = get_adapter(f"sqlite:obo:{ontology_id}")
-    
+
     # Display ontology metadata
     try:
         for ont in adapter.ontologies():
             metadata = adapter.ontology_metadata_map(ont)
             version_iri = metadata.get("owl:versionIRI", "unknown")
-            print(f"📦 {ontology_id.upper()} version: {version_iri}")
+            logger.debug(f"{ontology_id.upper()} version: {version_iri}")
     except Exception as e:
-        print(f"⚠️ Could not fetch version metadata for {ontology_id}: {e}")
+        logger.debug(f"Could not fetch version metadata for {ontology_id}: {e}")
 
     return adapter
 
 
-def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFrame, config: dict) -> pd.DataFrame:
+
+
+def load_config(config_path):
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        click.echo(f"Error reading config file: {e}", err=True)
+        sys.exit(1)
+
+    # Basic validation
+    required_keys = ["ontologies", "columns_to_annotate"]
+    for key in required_keys:
+        if key not in config:
+            click.echo(f"Missing required config key: {key}", err=True)
+            sys.exit(1)
+
+    if not isinstance(config["ontologies"], list) or not all(isinstance(o, str) for o in config["ontologies"]):
+        click.echo("Config error: 'ontologies' should be a list of strings", err=True)
+        sys.exit(1)
+
+    if not isinstance(config["columns_to_annotate"], list) or not all(isinstance(c, str) for c in config["columns_to_annotate"]):
+        click.echo("Config error: 'columns_to_annotate' should be a list of strings", err=True)
+        sys.exit(1)
+
+    return config
+
+
+def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFrame, columns: list, config: dict) -> pd.DataFrame:
     """
     Search for exact matches to the ontology term label.
     :param adapter: The connector to the ontology database.
@@ -127,18 +167,20 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
     ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
     exact_search_results = []
 
+    column_to_use = columns[0]  # assuming just one for now
+
     # Create a tqdm instance to display search progress
-    progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
+    #progress_bar = tqdm(total=len(df), desc="Processing Rows", unit="row")
 
     for index, row in df.iterrows():
-        # TODO: Parameterize search column value
-        for result in adapter.basic_search(row.iloc[2], config=config):
-            exact_search_results.append([row["UUID"], result, adapter.label(result)])
-            # Update the progress bar
-            progress_bar.update(1)
+        if pd.notna(row[column_to_use]):
+            for result in adapter.basic_search(row[column_to_use], config=config):
+                exact_search_results.append([row["UUID"], result, adapter.label(result)])
+                # Update the progress bar
+                #progress_bar.update(1)
 
     # Close the progress bar
-    progress_bar.close()
+    #progress_bar.close()
 
     # Convert search results to dataframe
     results_df = pd.DataFrame(exact_search_results)
@@ -175,6 +217,69 @@ def search_ontology(ontology_id: str, adapter: SqlImplementation, df: pd.DataFra
             search_results_df[f'{ontology_prefix}_result_curie'].notnull(), f'{ontology_prefix.upper()}_EXACT_ALIAS', '')
 
     return search_results_df
+
+
+
+def clean_json_response(content: str) -> str:
+    """
+    Clean common formatting issues in GPT output before JSON parsing.
+    """
+    # Replace smart quotes with standard quotes
+    content = content.replace("“", "\"").replace("”", "\"").replace("‘", "'").replace("’", "'")
+
+    # Strip any leading junk like ```json ... ```
+    content = re.sub(r"^```(json)?\s*", "", content.strip())
+    content = re.sub(r"\s*```$", "", content.strip())
+
+    return content
+
+
+def get_alternative_names(term: str) -> dict:
+    prompt = (
+        f"For the term '{term}', return a JSON object with three keys:\n"
+        "- 'input': the original term\n"
+        "- 'alt_names': a list of up to five alternative names\n"
+        "- 'source': the string 'openai'\n\n"
+        "Example format:\n"
+        "{\n"
+        '  "input": "hole in heart",\n'
+        '  "alt_names": [\n'
+        '    "atrial septal defect",\n'
+        '    "ventricular septal defect",\n'
+        '    "congenital heart defect",\n'
+        '    "septal defect",\n'
+        '    "cardiac shunt"\n'
+        "  ],\n"
+        '  "source": "openai"\n'
+        "}"
+    )
+
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=150,
+        )
+        content = response['choices'][0]['message']['content']
+        cleaned = clean_json_response(content)
+        result = json.loads(cleaned)
+        return result
+    except json.JSONDecodeError as e:
+        logger.debug(f"Could not parse JSON from content: {repr(content)} - JSONDecodeError: {e}")
+        return []
+    except openai.error.OpenAIError as oe:
+        logger.debug(f"OpenAI API error for '{term}': {oe}")
+        return []
+    except openai.error.InvalidRequestError as e:
+        if "quota" in str(e).lower():
+            logger.error("Quota exceeded — check billing and usage.")
+        else:
+            logger.error(f"OpenAI API request error: {e}")
+    except Exception as e:
+        logger.debug(f"Error retrieving alt names for '{term}': {e}")
+        return []
 
 
 def generate_uuid() -> str:
@@ -223,136 +328,194 @@ def _check_ontology_versions(ontology_ids: tuple):
     Check and print the cached ontology versions for each ID.
     :param ontology_ids: Tuple of ontology IDs to check.
     """
-    print("\nChecking local ontology versions...")
+    logger.debug("\nChecking local ontology versions...")
     for oid in ontology_ids:
         try:
             adapter = get_adapter(f"sqlite:obo:{oid}")
             for ont in adapter.ontologies():
                 meta = adapter.ontology_metadata_map(ont)
                 version = meta.get("owl:versionIRI", "Unknown")
-                print(f"  - {oid.upper()}: {version}")
+                logger.debug(f"  - {oid.upper()}: {version}")
         except Exception as e:
-            print(f"  - {oid.upper()}: Error loading version ({e})")
+            logger.debug(f"  - {oid.upper()}: Error loading version ({e})")
 
 
 
-@main.command("search")
-@click.option('--oid', '-o', help='Ontology IDs separated by commas')
-@click.option('--data_filename', '-d')
-def search(oid: tuple, data_filename: str):
+def custom_join(series):
+    non_empty = series.dropna().astype(str).str.strip()
+    non_empty = [v for v in non_empty if v]
+    unique_vals = list(dict.fromkeys(non_empty))
+    return ', '.join(unique_vals) if unique_vals else ''
+
+
+
+@main.command("annotate")
+@click.option('--config', type=click.Path(exists=True), help='Path to YAML config file')
+@click.option('--input_file', type=click.Path(exists=True), required=True, help="Path to data file to annotate")
+@click.option('--output_dir', type=click.Path(), required=False, help='Optional override for output directory')
+@click.option('--refresh', is_flag=True, help='Force refresh of ontology cache')
+@click.option('--use_openai', is_flag=True, default=False, help='Use OpenAI-based fallback searches')
+def annotate(config: str, input_file: str, output_dir: str, refresh: bool, use_openai: bool):
     """
-    Search an ontology for matches to terms in a data file.
-    :param ontology_id: The OBO identifier of the ontology.
+    Annotate a data file with ontology terms.
+    :param config: Path to the config file.
     :param data_filename: The name of the file with terms to search for ontology matches.
     """
-    oid = tuple(oid.split(',')) if oid else ()
+
+    config_data = load_config(config)
+
+    ontologies = config_data["ontologies"]
+    columns = config_data["columns_to_annotate"]
+
+    if not ontologies or not columns:
+        raise click.ClickException("Config file must contain 'ontologies' and 'columns_to_annotate'.")
+    
+    # Determine output directory from CLI or config or fallback
+    output_dir = Path(output_dir or config_data.get("output_dir", "data/output/")).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    click.echo(f"Using ontologies: {ontologies}")
+    click.echo(f"Annotating columns: {columns}")
+    click.echo(f"Output directory: {output_dir}")
+    if refresh:
+        click.echo("Refresh mode enabled")
+
+    oid = tuple(o.lower() for o in config_data["ontologies"])
+ 
     filename_prefix = '_'.join(oid)
-    output_data_directory = './data/output/'
 
     # Get the current formatted timestamp
     timestamp = datetime.now()
     formatted_timestamp = timestamp.strftime("%Y%m%d-%H%M%S")
 
-
-    all_final_results_dict = {}
-
     # Read in the data file
-    file_path = Path(f'data/input/{data_filename}')
-    xls = pd.ExcelFile(file_path)
-    # TODO: parameterize Sheet name variable?
-    data_df = pd.read_excel(xls, 'Sheet1') #condition_codes_v5
-    logger.debug(data_df.head())
+    file_path = Path(input_file).resolve()
+
+    data_df = pd.read_csv(file_path, sep='\t')
+    logger.debug(data_df[columns])
     
     # Add a new column 'UUID' with unique identifier values
-    # TODO: Add the UUID column if it does not already exist
     data_df['UUID'] = data_df.apply(lambda row: generate_uuid(), axis=1)
     logger.debug(data_df.nunique())
     logger.info("Number of total rows in dataframe: %s", len(data_df))
 
-    # Exact LABEL Search configuration
-    exact_label_search_config = SearchConfiguration(
-            properties=[SearchProperty.LABEL],
-            force_case_insensitive=True,
-        )
-    
-    # Exact LABEL and SYNONYM Search configuration
-    exact_label_synonym_search_config = SearchConfiguration(
-            properties=[SearchProperty.ALIAS],
-            force_case_insensitive=True,
-        )
-
     # Check ontology versions 
     _check_ontology_versions(oid)
 
-    refresh_ontologies = False
-    response = input("\nWould you like to continue with these cached versions? [Y/n]: ").strip().lower()
-    if response == 'n':
-        update_response = input("Would you like to download updated versions? [Y/n]: ").strip().lower()
-        if update_response != 'n':
-            refresh_ontologies = True
-        else:
-            print("Exiting.")
-            return
 
+    # Collect all annotation results
+    all_final_results = []
 
-    # Begin searching for ontology term matches
     for ontology_id in oid:
         ontology_prefix = 'hpo' if ontology_id.lower() == 'hp' else ontology_id
+        adapter = fetch_ontology(ontology_id, refresh=refresh)
 
-        # Get the ontology
-        adapter = fetch_ontology(ontology_id, refresh=refresh_ontologies)
+        # === Exact LABEL match ===
+        label_config = SearchConfiguration(properties=[SearchProperty.LABEL], force_case_insensitive=True)
+        label_hits_df = search_ontology(ontology_id, adapter, data_df, columns, label_config)
+        label_hits_df["annotation_source"] = "oak"
+        label_hits_df["annotation_method"] = "exact_label"
+        label_hits_df["ontology"] = ontology_id.lower()
 
-        # Search for matching ontology terms to LABEL
-        exact_label_results_df = search_ontology(ontology_id, adapter, data_df, exact_label_search_config)
-        # Join exact_label_results_df back to original input data
-        overall_exact_label_results_df = pd.merge(data_df, exact_label_results_df, how='left', on='UUID')
-        # Clean up dataframe to remove original search columns
-        overall_exact_label_results_df = _clean_up_columns(overall_exact_label_results_df, ontology_id)
+        # Filter unmatched
+        matched_uuids_label = set(label_hits_df["UUID"])
+        filtered_df = data_df[~data_df["UUID"].isin(matched_uuids_label)]
 
-        # Filter out rows that have results to prepare for synonym search
-        filtered_df = overall_exact_label_results_df[overall_exact_label_results_df[f'{ontology_prefix}_result_match_type'].isnull()]
+        # === Synonym match ===
+        synonym_config = SearchConfiguration(properties=[SearchProperty.ALIAS], force_case_insensitive=True)
+        synonym_hits_df = search_ontology(ontology_id, adapter, filtered_df, columns, synonym_config)
+        synonym_hits_df["annotation_source"] = "oak"
+        synonym_hits_df["annotation_method"] = "exact_synonym"
+        synonym_hits_df["ontology"] = ontology_id.lower()
 
-        # Search for matching terms to SYNONYM
-        overall_exact_synonym_results_df = search_ontology(ontology_id, adapter, filtered_df, exact_label_synonym_search_config)
-        # Join overall_exact_synonym_results_df back to overall_results_df
-        overall_final_results_df = pd.merge(overall_exact_label_results_df, overall_exact_synonym_results_df, how='left', on='UUID')
-        # Clean up dataframe to remove original search columns
-        overall_final_results_df = _clean_up_columns(overall_final_results_df, ontology_id)
+        matched_uuids_syn = set(synonym_hits_df["UUID"])
+        filtered_df = filtered_df[~filtered_df["UUID"].isin(matched_uuids_syn)]
 
-        # Save ontology search results to a dict
-        all_final_results_dict[ontology_id] = overall_final_results_df
+        # === OpenAI alternative names ===
+        openai_hits = []
+        if use_openai:
+            print('Searching OpenAI now....')
+            for term in tqdm(filtered_df[columns[0]].dropna().unique()):
+                # Normalize the term
+                match = re.match(r"^(.*?)\s*\((\w{3,5})\)$", term.strip())
+                normalized_term = match.group(1).strip() if match else term.strip()
+
+                alt_response = get_alternative_names(normalized_term)
+                if not alt_response:
+                    continue
+
+                uuid_series = filtered_df[filtered_df[columns[0]] == term]["UUID"]
+                if uuid_series.empty:
+                    continue
+                uuid = uuid_series.iloc[0]
+
+                found_match = False
+
+                for alt in alt_response.get("alt_names", []):
+                    # First: exact label match
+                    df_search = pd.DataFrame({"UUID": [uuid], columns[0]: [alt]})
+                    label_match_df = search_ontology(ontology_id, adapter, df_search, columns, label_config)
+                    if not label_match_df.empty:
+                        label_match_df["annotation_source"] = "openai"
+                        label_match_df["annotation_method"] = "alt_term_label"
+                        label_match_df["original_term"] = normalized_term
+                        label_match_df["ontology"] = ontology_id.lower()
+                        openai_hits.append(label_match_df)
+                        found_match = True
+                        break
+
+                    # Then: synonym match if label fails
+                    synonym_match_df = search_ontology(ontology_id, adapter, df_search, columns, synonym_config)
+                    if not synonym_match_df.empty:
+                        synonym_match_df["annotation_source"] = "openai"
+                        synonym_match_df["annotation_method"] = "alt_term_synonym"
+                        synonym_match_df["original_term"] = normalized_term
+                        synonym_match_df["ontology"] = ontology_id.lower()
+                        openai_hits.append(synonym_match_df)
+                        found_match = True
+                        break
+
+                if not found_match:
+                    openai_hits.append(pd.DataFrame([{
+                        "UUID": uuid,
+                        "annotation_source": "openai",
+                        "annotation_method": "no_match",
+                        "original_term": normalized_term,
+                        "alt_names": ', '.join(alt_response.get("alt_names", [])),
+                        "ontology": ontology_id.lower()
+                    }]))
 
 
+        openai_hits_df = pd.concat(openai_hits, ignore_index=True) if openai_hits else pd.DataFrame()
+        results_sources = [label_hits_df, synonym_hits_df]
+        if not openai_hits_df.empty:
+            results_sources.append(openai_hits_df)
 
-    # Finally, combine all results and save to file!
-    # Concatenate all DataFrames into a single DataFrame
-    result_df = pd.concat(all_final_results_dict.values(), ignore_index=True)
+        results_df = pd.concat(results_sources, ignore_index=True)
+        if not results_df.empty:
+            all_final_results.append(results_df)
 
-    # Replace NaN values with empty string
-    df_cleaned = result_df.fillna('')
+    # === Exit if no results  ===
+    if not all_final_results:
+        logger.warning("No annotation results found for any ontology.")
+        return
 
-    # Define a custom aggregation function to join non-empty values
-    def custom_join(series):
-        non_empty_values = [value for value in series if value != '']
-        return ', '.join(non_empty_values)
-    
+    # === Combine all results ===
+    full_results = pd.concat(all_final_results, ignore_index=True)
 
-    # Add columns dynamically to the "agg" function _if_ they exist within the dataframe
-    columns_to_groupby = ['UUID', 'study', 'source_column', 'source_column_value', 'conditionMeasureSourceText']
-    columns_to_agg = [col for col in df_cleaned.columns if col in [
-        'hpoLabel', 'hpoCode', 'hpo_result_match_type',
-        'mondoLabel', 'mondoCode', 'mondo_result_match_type', 
-        'maxoLabel', 'maxoCode', 'maxo_result_match_type',
-        'otherLabel', 'otherCode', 'Trish Notes']
-    ]
+    # === Merge with input metadata ===
+    data_df["UUID"] = data_df["UUID"].astype(str).str.strip()
+    full_results["UUID"] = full_results["UUID"].astype(str).str.strip()
+    final_df = pd.merge(data_df, full_results, on="UUID", how="left")
 
-    # Perform the groupby and aggregation
-    agg_dict = {col: custom_join for col in columns_to_agg}
-    combined_df = df_cleaned.groupby(columns_to_groupby).agg(agg_dict).reset_index()
+    # Drop duplicated or unnecessary columns
+    final_df.drop(columns=["source_column_value_y", "original_term"], inplace=True, errors="ignore")
 
-
-    # Save combined results to file
-    combined_df.to_excel(f'{output_data_directory}{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.xlsx', index=False)
+    # === Save final output ===
+    final_df = final_df.fillna("")
+    output_path = Path(output_dir) / f"{filename_prefix}-combined_ontology_annotations-{formatted_timestamp}.tsv"
+    final_df.to_csv(output_path, sep='\t', index=False)
+    print(f"\nAnnotation results written to: {output_path}")
 
 
 if __name__ == "__main__":

@@ -14,13 +14,24 @@ The prerequisites to run the script can either be installed using the `requireme
 
 ## Usage
 ### Python
-`python src/harmonize.py -vv search --oid "mondo,hp" --data_filename "TEST/demo_data.xlsx"`
+```
+python src/harmonize.py annotate \
+    --config config/config.yml \
+    --input_file data/input/TEST/conditions_simple.tsv \
+    --output_dir tmp/output/
+```
+NOTES:
+1. Include `-vv` before `annotate` to generate debug output.
+1. `--output_dir` is optional; it can be defined in the YAML config instead.
+1. `--refresh` flag to update the cached OAK ontology database. To rely on the existing local copy, leave out `--refresh` or `refresh=true`.
+1. `--use_openai` flag to skip LLM-based annotation, if true search with LLM approaches are used. The default is false.
+
 
 ### Make
-`make search oid="mondo,hp" data_filename="demo_data.xlsx"`
+`make annotate input_file=data/input/TEST/conditions_simple.tsv output_dir=tmp/output`
 
-_NOTE: Do not include any spaces when passing multiple ontology identifiers (oid)._
-
+Optional parameters of `refresh=true` and `use_openai=true` can be added.
+ 
 
 ## Ontology SQLite Database
 Using `get_adapter(f"sqlite:obo:{ontology_id}")` the ontology database is saved at `~/.data/oaklib/`.
@@ -39,6 +50,15 @@ OAK references:
 
 TODO: Include other methods to download ontology content and convert to a SQLite database using [semsql](https://github.com/INCATools/semantic-sql).
 
+
+## Configuration
+
+Copy the example config and customize it for your project:
+`cp config/config.example.yml config/config.yml`
+
+## OpenAI API
+Create an OpenAI API Key [here](https://platform.openai.com/api-keys) and then add this your environment as: 
+`export OPENAI_API_KEY=your-key-here>`
 
 ## Data File
 Currently, the script assumes that the data file is an Excel file that has ~~one sheet~~ multiple sheets (TODO: paramterize Sheet name) and that the column with terms to search for matches to an ontology are in the first column.

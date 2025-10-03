@@ -1,0 +1,10 @@
+# List of ontology prefixes to use for annotation
+ontologies:
+  - MONDO
+  - HPO
+
+# One or more columns in the input data file that should be annotated
+# These should exactly match the column names in your input spreadsheet
+columns_to_annotate:
+  - condition
+  - phenotype
